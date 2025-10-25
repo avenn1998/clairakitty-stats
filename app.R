@@ -1,192 +1,197 @@
-# Load packages used by the app. Install missing packages, if needed.
 library(shiny)
-library(bslib)
-library(thematic)
-library(tidyverse)
-library(gitlink)
+library(plotly)
+library(dplyr)
+library(readr)
+library(tidyr)
+library(lubridate)
 
-# Read data from a CSV file and perform data preprocessing
-expansions <- read_csv("data/expansions.csv") |>
-  mutate(evaluation = factor(evaluation, levels = c("None", "A", "B")),
-         propensity = factor(propensity, levels = c("Good", "Average", "Poor")))
+# Read the data
+data <- read_csv("clairakitty_ao3_work_stats.csv") |>
+    dplyr::mutate(day = lubridate::date(time)) |>
+    dplyr::group_by(work_title, day) |>
+    dplyr::summarize(kudos = max(kudos),
+        hits = max(hits),
+        bookmarks = max(bookmarks),
+        comments = max(comments),
+        words = max(words),  # Keep words column
+        .groups = "drop") |>
+    dplyr::group_by(work_title) |>
+    dplyr::mutate(new_kudos = kudos - lag(kudos),
+        new_hits = hits - lag(hits),
+        new_bookmarks = bookmarks - lag(bookmarks),
+        new_comments = comments - lag(comments))
 
-# Compute expansion rates by trial and group
-expansion_groups <- expansions |>
-  group_by(industry, propensity, contract, evaluation) |>
-  summarize(success_rate = round(mean(outcome == "Won")* 100),
-            avg_amount = round(mean(amount)),
-            avg_days = round(mean(days)),
-            n = n()) |>
-  ungroup()
+# Remove test row
+data <- data %>% filter(work_title != "test")
 
-# Compute expansion rates by trial
-overall_rates <- expansions |>
-  group_by(evaluation) |>
-  summarise(rate = round(mean(outcome == "Won"), 2))
+# Get unique work titles
+work_titles <- sort(unique(data$work_title))
 
-# Restructure expansion rates by trial as a vector
-rates <- structure(overall_rates$rate, names = overall_rates$evaluation)
+# Create a color palette with enough distinct colors for all works
+n_works <- length(work_titles)
+colors <- colorRampPalette(c("#e41a1c", "#377eb8", "#4daf4a", "#984ea3", 
+                              "#ff7f00", "#ffff33", "#a65628", "#f781bf",
+                              "#1b9e77", "#d95f02", "#7570b3", "#e7298a",
+                              "#66a61e", "#e6ab02", "#a6761d", "#666666"))(n_works)
+color_map <- setNames(colors, work_titles)
 
-# Define lists for propensity, contract and industry choices
-propensities <- c("Good", "Average", "Poor")
-contracts <- c("Monthly", "Annual")
-industries <- c("Academia",
-                "Energy",
-                "Finance",
-                "Government",
-                "Healthcare",
-                "Insurance",
-                "Manufacturing",
-                "Non-Profit",
-                "Pharmaceuticals",
-                "Technology")
-
-# Set the default theme for ggplot2 plots
-ggplot2::theme_set(ggplot2::theme_minimal())
-
-# Apply the CSS used by the Shiny app to the ggplot2 plots
-thematic_shiny()
-
-
-# Define the Shiny UI layout
-ui <- page_sidebar(
-
-  # Set CSS theme
-  theme = bs_theme(bootswatch = "darkly",
-                   bg = "#222222",
-                   fg = "#86C7ED",
-                   success ="#86C7ED"),
-
-  # Add title
-  title = "Effectiveness of DemoCo App Free Trial by Customer Segment",
-
-  # Add sidebar elements
-  sidebar = sidebar(title = "Select a segment of data to view",
-                    class ="bg-secondary",
-                    selectInput("industry", "Select industries", choices = industries, selected = "", multiple  = TRUE),
-                    selectInput("propensity", "Select propensities to buy", choices = propensities, selected = "", multiple  = TRUE),
-                    selectInput("contract", "Select contract types", choices = contracts, selected = "", multiple  = TRUE),
-                    "This app compares the effectiveness of two types of free trials, A (30-days) and B (100-days), at converting users into customers.",
-                    tags$img(src = "logo.png", width = "100%", height = "auto")),
-
-  # Layout non-sidebar elements
-  layout_columns(card(card_header("Conversions over time"),
-                      plotOutput("line")),
-                 card(card_header("Conversion rates"),
-                      plotOutput("bar")),
-                 value_box(title = "Recommended Trial",
-                           value = textOutput("recommended_eval"),
-                           theme_color = "secondary"),
-                 value_box(title = "Customers",
-                           value = textOutput("number_of_customers"),
-                           theme_color = "secondary"),
-                 value_box(title = "Avg Spend",
-                           value = textOutput("average_spend"),
-                           theme_color = "secondary"),
-                 card(card_header("Conversion rates by subgroup"),
-                      tableOutput("table")),
-                 col_widths = c(8, 4, 4, 4, 4, 12),
-                 row_heights = c(4, 1.5, 3))
+# UI
+ui <- fluidPage(
+  titlePanel("AO3 Work Statistics Dashboard"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      checkboxGroupInput(
+        "works",
+        "Select Works:",
+        choices = work_titles,
+        selected = work_titles
+      ),
+      actionButton("select_all", "Select All"),
+      actionButton("deselect_all", "Deselect All"),
+      width = 3
+    ),
+    
+    mainPanel(
+      plotlyOutput("summary_bar", height = "700px"),
+      hr(),
+      plotlyOutput("kudos_plot", height = "300px"),
+      plotlyOutput("hits_plot", height = "300px"),
+      plotlyOutput("bookmarks_plot", height = "300px"),
+      plotlyOutput("comments_plot", height = "300px"),
+      width = 9
+    )
+  )
 )
 
-# Define the Shiny server function
-server <- function(input, output) {
-
-  # Provide default values for industry, propensity, and contract selections
-  selected_industries <- reactive({
-    if (is.null(input$industry)) industries else input$industry
+# Server
+server <- function(input, output, session) {
+  
+  # Select/Deselect all buttons
+  observeEvent(input$select_all, {
+    updateCheckboxGroupInput(session, "works", selected = work_titles)
   })
-
-  selected_propensities <- reactive({
-    if (is.null(input$propensity)) propensities else input$propensity
+  
+  observeEvent(input$deselect_all, {
+    updateCheckboxGroupInput(session, "works", selected = character(0))
   })
-
-  selected_contracts <- reactive({
-    if (is.null(input$contract)) contracts else input$contract
+  
+  # Reactive filtered data
+  filtered_data <- reactive({
+    req(input$works)
+    data %>% filter(work_title %in% input$works)
   })
-
-  # Filter data against selections
-  filtered_expansions <- reactive({
-    expansions |>
-      filter(industry %in% selected_industries(),
-             propensity %in% selected_propensities(),
-             contract %in% selected_contracts())
-  })
-
-  # Compute conversions by month
-  conversions <- reactive({
-    filtered_expansions() |>
-      mutate(date = floor_date(date, unit = "month")) |>
-      group_by(date, evaluation) |>
-      summarize(n = sum(outcome == "Won")) |>
+  
+  # Get most recent values for each work
+  recent_data <- reactive({
+    filtered_data() %>%
+      group_by(work_title) %>%
+      arrange(desc(day)) %>%
+      slice(1) %>%
       ungroup()
   })
-
-  # Retrieve conversion rates for selected groups
-  groups <- reactive({
-    expansion_groups |>
-      filter(industry %in% selected_industries(),
-             propensity %in% selected_propensities(),
-             contract %in% selected_contracts())
+  
+  # Summary bar chart with facets
+  output$summary_bar <- renderPlotly({
+    df <- recent_data()
+    
+    # Create separate plots for each metric
+    p1 <- plot_ly(df, x = ~work_title, y = ~kudos, type = 'bar',
+                  name = 'Kudos', marker = list(color = '#e41a1c')) %>%
+      layout(xaxis = list(title = "", tickangle = -45),
+             yaxis = list(title = "Kudos"),
+             showlegend = FALSE)
+    
+    p2 <- plot_ly(df, x = ~work_title, y = ~comments, type = 'bar',
+                  name = 'Comments', marker = list(color = '#984ea3')) %>%
+      layout(xaxis = list(title = "", tickangle = -45),
+             yaxis = list(title = "Comments"),
+             showlegend = FALSE)
+    
+    p3 <- plot_ly(df, x = ~work_title, y = ~bookmarks, type = 'bar',
+                  name = 'Bookmarks', marker = list(color = '#4daf4a')) %>%
+      layout(xaxis = list(title = "", tickangle = -45),
+             yaxis = list(title = "Bookmarks"),
+             showlegend = FALSE)
+    
+    p4 <- plot_ly(df, x = ~work_title, y = ~hits, type = 'bar',
+                  name = 'Hits', marker = list(color = '#377eb8')) %>%
+      layout(xaxis = list(title = "", tickangle = -45),
+             yaxis = list(title = "Hits"),
+             showlegend = FALSE)
+    
+    p5 <- plot_ly(df, x = ~work_title, y = ~words, type = 'bar',
+                  name = 'Words', marker = list(color = '#ff7f00')) %>%
+      layout(xaxis = list(title = "Work Title", tickangle = -45),
+             yaxis = list(title = "Words"),
+             showlegend = FALSE)
+    
+    # Combine into subplots with independent y-axes
+    subplot(p1, p2, p3, p4, p5, nrows = 5, shareX = TRUE, titleY = TRUE) %>%
+      layout(title = "Most Recent Statistics by Work (Independent Scales)",
+             hovermode = "closest")
   })
 
-  # Render text for recommended trial
-  output$recommended_eval <- renderText({
-    recommendation <-
-      filtered_expansions() |>
-      group_by(evaluation) |>
-      summarise(rate = mean(outcome == "Won")) |>
-      filter(rate == max(rate)) |>
-      pull(evaluation)
-
-    as.character(recommendation[1])
+  # Kudos plot
+  output$kudos_plot <- renderPlotly({
+    df <- filtered_data()
+    
+    plot_ly(df, x = ~day, y = ~new_kudos, color = ~work_title,
+            colors = color_map[unique(df$work_title)],
+            type = 'scatter', mode = 'lines+markers') %>%
+      layout(
+        title = "New Kudos Over Time",
+        xaxis = list(title = "Date"),
+        yaxis = list(title = "New Kudos"),
+        hovermode = "closest"
+      )
   })
-
-  # Render text for number of customers
-  output$number_of_customers <- renderText({
-    sum(filtered_expansions()$outcome == "Won") |>
-      format(big.mark = ",")
+  
+  # Hits plot
+  output$hits_plot <- renderPlotly({
+    df <- filtered_data()
+    
+    plot_ly(df, x = ~day, y = ~new_hits, color = ~work_title,
+            colors = color_map[unique(df$work_title)],
+            type = 'scatter', mode = 'lines+markers') %>%
+      layout(
+        title = "New Hits Over Time",
+        xaxis = list(title = "Date"),
+        yaxis = list(title = "New Hits"),
+        hovermode = "closest"
+      )
   })
-
-  # Render text for average spend
-  output$average_spend <- renderText({
-      x <-
-        filtered_expansions() |>
-        filter(outcome == "Won") |>
-        summarise(spend = round(mean(amount))) |>
-        pull(spend)
-
-      str_glue("${x}")
+  
+  # Bookmarks plot
+  output$bookmarks_plot <- renderPlotly({
+    df <- filtered_data()
+    
+    plot_ly(df, x = ~day, y = ~new_bookmarks, color = ~work_title,
+            colors = color_map[unique(df$work_title)],
+            type = 'scatter', mode = 'lines+markers') %>%
+      layout(
+        title = "New Bookmarks Over Time",
+        xaxis = list(title = "Date"),
+        yaxis = list(title = "New Bookmarks"),
+        hovermode = "closest"
+      )
   })
-
-  # Render line plot for conversions over time
-  output$line <- renderPlot({
-    ggplot(conversions(), aes(x = date, y = n, color = evaluation)) +
-      geom_line() +
-      theme(axis.title = element_blank()) +
-      labs(color = "Trial Type")
+  
+  # Comments plot
+  output$comments_plot <- renderPlotly({
+    df <- filtered_data()
+    
+    plot_ly(df, x = ~day, y = ~new_comments, color = ~work_title,
+            colors = color_map[unique(df$work_title)],
+            type = 'scatter', mode = 'lines+markers') %>%
+      layout(
+        title = "New Comments Over Time",
+        xaxis = list(title = "Date"),
+        yaxis = list(title = "New Comments"),
+        hovermode = "closest"
+      )
   })
-
-  # Render bar plot for conversion rates by subgroup
-  output$bar <- renderPlot({
-    groups() |>
-      group_by(evaluation) |>
-      summarise(rate = round(sum(n * success_rate) / sum(n), 2)) |>
-      ggplot(aes(x = evaluation, y = rate, fill = evaluation)) +
-        geom_col() +
-        guides(fill = "none") +
-        theme(axis.title = element_blank()) +
-        scale_y_continuous(limits = c(0, 100))
-  })
-
-  # Render table for conversion rates by subgroup
-  output$table <- renderTable({
-    groups() |>
-      select(industry, propensity, contract, evaluation, success_rate) |>
-      pivot_wider(names_from = evaluation, values_from = success_rate)
-  },
-  digits = 0)
 }
 
-# Create the Shiny app
+# Run the app
 shinyApp(ui = ui, server = server)
