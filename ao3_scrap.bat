@@ -7,7 +7,6 @@ call .venv\Scripts\activate.bat
 
 python ao3_stat_scrape.py
 
-pause 
 
 REM Deactivate the virtual environment (optional, but good practice if not exiting)
 deactivate
