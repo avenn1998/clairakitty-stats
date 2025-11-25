@@ -13,13 +13,15 @@ data <- read_csv("clairakitty_ao3_work_stats.csv") |>
         hits = max(hits),
         bookmarks = max(bookmarks),
         comments = max(comments),
-        words = max(words),  # Keep words column
+        words = max(words),
+        chapters = max(chapters), 
         .groups = "drop") |>
     dplyr::group_by(work_title) |>
     dplyr::mutate(new_kudos = kudos - lag(kudos),
         new_hits = hits - lag(hits),
         new_bookmarks = bookmarks - lag(bookmarks),
-        new_comments = comments - lag(comments))
+        new_comments = comments - lag(comments),
+        new_chapters = chapters - lag(chapters))  
 
 # Remove test row
 data <- data %>% filter(work_title != "test")
@@ -59,6 +61,7 @@ ui <- fluidPage(
       plotlyOutput("hits_plot", height = "300px"),
       plotlyOutput("bookmarks_plot", height = "300px"),
       plotlyOutput("comments_plot", height = "300px"),
+      plotlyOutput("chapters_plot", height = "300px"),
       width = 9
     )
   )
@@ -128,7 +131,7 @@ server <- function(input, output, session) {
     
     # Combine into subplots with independent y-axes
     subplot(p1, p2, p3, p4, p5, nrows = 5, shareX = TRUE, titleY = TRUE) %>%
-      layout(title = "Most Recent Statistics by Work (Independent Scales)",
+      layout(title = "Most Recent Statistics by Work",
              hovermode = "closest")
   })
 
@@ -188,6 +191,21 @@ server <- function(input, output, session) {
         title = "New Comments Over Time",
         xaxis = list(title = "Date"),
         yaxis = list(title = "New Comments"),
+        hovermode = "closest"
+      )
+  })
+  
+  # Chapters plot
+  output$chapters_plot <- renderPlotly({
+    df <- filtered_data()
+    
+    plot_ly(df, x = ~day, y = ~new_chapters, color = ~work_title,
+            colors = color_map[unique(df$work_title)],
+            type = 'scatter', mode = 'lines+markers') %>%
+      layout(
+        title = "New Chapters Over Time",
+        xaxis = list(title = "Date"),
+        yaxis = list(title = "New Chapters"),
         hovermode = "closest"
       )
   })
