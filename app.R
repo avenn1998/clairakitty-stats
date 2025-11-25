@@ -195,17 +195,17 @@ server <- function(input, output, session) {
       )
   })
   
-  # Chapters plot
+  # Chapters plot - showing actual chapter count instead of change
   output$chapters_plot <- renderPlotly({
     df <- filtered_data()
     
-    plot_ly(df, x = ~day, y = ~new_chapters, color = ~work_title,
+    plot_ly(df, x = ~day, y = ~chapters, color = ~work_title,
             colors = color_map[unique(df$work_title)],
             type = 'scatter', mode = 'lines+markers') %>%
       layout(
-        title = "New Chapters Over Time",
+        title = "Chapters Over Time",
         xaxis = list(title = "Date"),
-        yaxis = list(title = "New Chapters"),
+        yaxis = list(title = "Chapters"),
         hovermode = "closest"
       )
   })
